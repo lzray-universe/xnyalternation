@@ -232,6 +232,42 @@ def redirect_to_login():
     # 使用 redirect 函数直接指定重定向的URL
     return redirect('/stu/#/course?pageid=0', code=302)
 
+# === 新增：HTTPS 混合内容自动升级（关键修复点） ===
+@app.after_request
+def _upgrade_insecure_requests(resp):
+    # 让浏览器自动把页面内的 http 子请求升级为 https
+    # 不改变你的任何接口或前端包
+    csp = resp.headers.get('Content-Security-Policy', '')
+    rule = 'upgrade-insecure-requests'
+    if 'upgrade-insecure-requests' not in csp:
+        csp = (csp + ('; ' if csp else '') + rule)
+        resp.headers['Content-Security-Policy'] = csp
+    return resp
+
+# === 新增：/stu/ 与 /stu/index.html 的包装，注入 PASSIVE 常量（另一处关键修复点） ===
+@app.route('/stu/')
+def _stu_root_redirect():
+    return redirect('/stu/index.html', code=302)
+
+@app.route('/stu/index.html')
+def _stu_index_with_passive():
+    # 复用你现有的静态文件逻辑拿到原始 HTML
+    resp = static('stu/index.html')
+    try:
+        body = resp.get_data(as_text=True)
+        inj = '<script>window.PASSIVE={passive:true};</script>'
+        if '</head>' in body:
+            body = body.replace('</head>', inj + '</head>', 1)
+        else:
+            body = inj + body
+        # 保持其他响应头（去掉长度相关头避免不一致）
+        excluded = {'content-length', 'transfer-encoding'}
+        headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
+        return Response(body, status=resp.status_code, headers=headers, mimetype='text/html; charset=utf-8')
+    except Exception:
+        # 如果不是 HTML 或获取失败，原样返回
+        return resp
+
 # @app.route('/exam/api/student/course/entity/<int:entity_id>/content')
 # def get_content(entity_id):
 #     # 这里可以根据 entity_id 来处理具体的逻辑
@@ -249,7 +285,7 @@ def redirect_to_login():
 #     headers = [(name, value) for (name, value) in resp.raw.headers.items()
 #                if name.lower() not in excluded_headers]
 #     data=resp.json();
-#     for i in range(len(data["extra"])):
+#     for i in range(len(data["extra"]))():
 #         if(data["extra"][i]["contentType"]==1):
 #             data["extra"][i]["content"]["downloadSwitch"]=1;
 #     response = Response(json.dumps(data), resp.status_code, headers)
@@ -438,7 +474,7 @@ async def get_statistics(entity_id):
                     err=1;
                 try:
                     if (len(i["content"]["childList"]) > 1):
-                        for j in range(len(i["content"]["childList"])):
+                        for j in range(len(i["content"]["childList"]))():
                             # i["content"]["childList"][j]["questionScore"] = 0
                             i["content"]["childList"][j]["studentSubmitTime"] = \
                             question[i["content"]["childList"][j]["id"]]["studentSubmitTime"]
