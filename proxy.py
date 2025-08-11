@@ -12,6 +12,9 @@ import aiohttp
 import asyncio
 import ssl
 import tempfile
+import base64
+import zlib
+import hashlib
 from urllib import parse
 from urllib import parse as _parse
 from flask import Flask, request, Response, redirect, send_from_directory, make_response, jsonify
@@ -19,10 +22,32 @@ from flask import Flask, request, Response, redirect, send_from_directory, make_
 TARGET_URL = 'https://bdfz.xnykcxt.com:5002'
 app = Flask(__name__)
 
-# —— 确保输出目录存在、配置 wkhtmltopdf 路径 ——
+# —— PDF 输出与 wkhtmltopdf —— #
 os.makedirs('pdfs', exist_ok=True)
 WKHTMLTOPDF_BIN = os.environ.get('WKHTMLTOPDF_PATH', '/usr/bin/wkhtmltopdf')
 PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_BIN)
+
+# —— 超短 token 映射（内存；Render 单实例足够） —— #
+SHORT_MAP = {}
+def _short_put(url: str) -> str:
+    # 取 8 字节随机 token，冲突概率可忽略
+    token = base64.urlsafe_b64encode(os.urandom(6)).decode().rstrip("=")
+    SHORT_MAP[token] = url
+    return token
+
+def _short_get(token: str) -> str | None:
+    return SHORT_MAP.get(token)
+
+# —— 工具：b64url 压缩/解压 —— #
+def b64url_encode(s: str) -> str:
+    data = zlib.compress(s.encode('utf-8'))
+    b = base64.urlsafe_b64encode(data).decode().rstrip("=")
+    return b
+
+def b64url_decode(b: str) -> str:
+    pad = '=' * (-len(b) % 4)
+    raw = base64.urlsafe_b64decode(b + pad)
+    return zlib.decompress(raw).decode('utf-8')
 
 async def get(session, url, headers=None):
     async with session.get(url, headers=headers) as response:
@@ -93,11 +118,13 @@ def api(path):
         response.set_cookie(key, value)
     return response
 
+# —— 修正版静态服务 —— #
 def static(file_path):
     normalized_path = os.path.normpath(file_path)
     if normalized_path.startswith('..') or '..' in normalized_path.split(os.path.sep):
         return Response("Not Found", mimetype='text/html; charset=utf-8', status=404)
 
+    # 解析本地相对路径
     if file_path.endswith('/'):
         local_file_path = os.path.join(normalized_path.lstrip('/\\'), 'index.html')
     elif len(file_path.split(".")) == 1:
@@ -106,32 +133,43 @@ def static(file_path):
         local_file_path = os.path.join(normalized_path.lstrip('/\\'))
     local_file_path = re.sub('\\\\', "/", local_file_path)
 
+    # 如果以 static/ 开头，去掉这个前缀后再和本地 static 目录拼
+    disk_rel = local_file_path
+    if disk_rel.startswith('static/'):
+        disk_rel = disk_rel[len('static/'):]
+
+    local_on_disk = os.path.join("static", disk_rel)
+    if os.path.exists(local_on_disk):
+        return make_response(send_from_directory("static", disk_rel, as_attachment=False))
+
+    # 否则：从上游拉取并缓存到 ./static/<disk_rel>
+    remote_url = f"{TARGET_URL}/{file_path.replace(os.path.sep, '/')}"
+    response = requests.get(
+        remote_url,
+        verify=False,
+        headers={key: value for key, value in request.headers if key != 'Host'},
+        data=request.get_data(),
+        cookies=request.cookies,
+        allow_redirects=False
+    )
+
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type is None:
         mime_type = 'text/html; charset=utf-8'
 
-    if os.path.exists(os.path.join("static", local_file_path)):
-        return make_response(send_from_directory("static", local_file_path, as_attachment=False))
+    if response.status_code // 100 < 4:
+        content = response.content
+        os.makedirs(os.path.dirname(local_on_disk), exist_ok=True)
+        with open(local_on_disk, 'wb') as f:
+            f.write(content)
+        return Response(content, mimetype=mime_type, status=200)
     else:
-        remote_url = f"{TARGET_URL}/{file_path.replace(os.path.sep, '/')}"
-        response = requests.get(
-            remote_url,
-            verify=False,
-            headers={key: value for key, value in request.headers if key != 'Host'},
-            data=request.get_data(),
-            cookies=request.cookies,
-            allow_redirects=False
-        )
+        return Response(response.content, mimetype=mime_type, status=response.status_code)
 
-        if response.status_code // 100 < 4:
-            content = response.content
-            if (len(content) < 5 * 2 ^ 20):  # 保持你原逻辑
-                os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-                with open(local_file_path, 'wb') as file:
-                    file.write(content)
-            return Response(content, mimetype=mime_type, status=200)
-        else:
-            return Response(response.content, mimetype=mime_type, status=response.status_code)
+# 显式处理 /static/* ，确保优先命中本地补丁版 viewer.html
+@app.route('/static/<path:filename>')
+def _serve_static(filename):
+    return static('static/' + filename)
 
 @app.route("/exam/login/api/logout")
 def logout():
@@ -139,17 +177,46 @@ def logout():
     response.set_cookie('token', '', expires=0)
     return response
 
-# ============== 新增：PDF 代理，让 PDF.js 统一走你自己的域名 =================
+# ===================== PDF 代理（含短链） ===================== #
+@app.route('/pdfproxy/register')
+def pdfproxy_register():
+    raw = request.args.get('url', '')
+    if not raw:
+        return jsonify({"error": "missing url"}), 400
+    url = _parse.unquote(raw)
+    # 相对路径统一补上 TARGET_URL
+    if url.startswith('/'):
+        url = f"{TARGET_URL}{url}"
+    token = _short_put(url)
+    return jsonify({"token": token, "link": f"/pdfproxy/t/{token}"})
+
+@app.route('/pdfproxy/u/<string:b64>')
+def pdfproxy_b64(b64: str):
+    try:
+        url = b64url_decode(b64)
+    except Exception:
+        return Response("bad b64", 400)
+    return _pdfproxy_core(url)
+
+@app.route('/pdfproxy/t/<string:token>')
+def pdfproxy_token(token: str):
+    url = _short_get(token)
+    if not url:
+        return Response("token not found", 404)
+    return _pdfproxy_core(url)
+
 @app.route('/pdfproxy')
-def _pdfproxy():
+def pdfproxy_query():
     raw = request.args.get('url', '')
     if not raw:
         return Response("missing url", 400)
     url = _parse.unquote(raw)
+    # 允许直接传相对路径
     if url.startswith('/'):
-        upstream = f"{TARGET_URL}{url}"
-    else:
-        upstream = url
+        url = f"{TARGET_URL}{url}"
+    return _pdfproxy_core(url)
+
+def _pdfproxy_core(upstream: str):
     r = requests.get(
         upstream,
         verify=False,
@@ -158,9 +225,10 @@ def _pdfproxy():
         stream=True,
         allow_redirects=True
     )
-    ct = r.headers.get('Content-Type', '') or 'application/pdf'
+    ct = r.headers.get('Content-Type') or 'application/pdf'
+    # 不强制下载，便于 PDF.js 渲染
     return Response(r.content, status=r.status_code, headers=[('Content-Type', ct)])
-# ============================================================================
+# ============================================================= #
 
 @app.route('/getWebFile')
 def getWebFile():
@@ -193,7 +261,6 @@ def downloadFile():
     name = request.args.get('name')
     r = requests.get(url, verify=False)
     content = r.content
-    # —— 若是 PDF，按 PDF 类型返回，便于 PDF.js 直接预览 ——
     if url.lower().endswith('.pdf'):
         return Response(content, 200, [('Content-Type', 'application/pdf')])
     headers = [("content-disposition",
@@ -241,7 +308,7 @@ async def getAllCourses():
 def redirect_to_login():
     return redirect('/stu/#/course?pageid=0', code=302)
 
-# —— 混合内容自动升级（HTTPS 下避免 http 子请求） ——
+# —— 混合内容自动升级 —— #
 @app.after_request
 def _upgrade_insecure_requests(resp):
     csp = resp.headers.get('Content-Security-Policy', '')
@@ -251,7 +318,7 @@ def _upgrade_insecure_requests(resp):
         resp.headers['Content-Security-Policy'] = csp
     return resp
 
-# —— /stu/ 与 /stu/index.html 的包装，注入 PASSIVE 常量 ——
+# —— /stu/ 包装：注入 PASSIVE —— #
 @app.route('/stu/')
 def _stu_root_redirect():
     return redirect('/stu/index.html', code=302)
@@ -295,7 +362,7 @@ def get_course(id):
 
 @app.route('/exam/api/student/<string:tp>/entity/<int:id>/content', methods=['GET'])
 def forward_request(tp, id):
-    url = f"https://bdfz.xnykcxt.com:5002/exam/api/student/{tp}/entity/{id}/content"
+    url = f"{TARGET_URL}/exam/api/student/{tp}/entity/{id}/content"
     headers = {key: value for key, value in request.headers if key != 'Host'}
     response = requests.get(url, headers=headers)
     data = response.json()
@@ -304,13 +371,12 @@ def forward_request(tp, id):
             if (item["contentType"] == 1):
                 item["content"]["downloadSwitch"] = 1
             for field in ['textContent', 'answer', 'questionAnalysis', 'questionStem', 'attachmentLinkAddress']:
-                if field in item["content"]:
-                    if (item["content"][field] is not None):
-                        soup = BeautifulSoup(item["content"][field], 'html.parser')
-                        for img in soup.find_all('img'):
-                            img['src'] = "https://bdfz.xnykcxt.com:5002" + img['src']
-                            img.attrs.pop('data-href', None)
-                        item["content"][field] = str(soup)
+                if field in item["content"] and (item["content"][field] is not None):
+                    soup = BeautifulSoup(item["content"][field], 'html.parser')
+                    for img in soup.find_all('img'):
+                        img['src'] = f"{TARGET_URL}" + img['src']
+                        img.attrs.pop('data-href', None)
+                    item["content"][field] = str(soup)
     return jsonify(data)
 
 @app.route('/exam/api/student/paper/entity/catalog/<int:catalog_id>')
@@ -441,7 +507,7 @@ def get_config():
     text = """(function (window) {
       window.$config = {
         BASE_API: "http://%s",
-        photoType: 2,
+        photoType: 2
       };
     })(window);
     """ % request.headers.get("Host")
