@@ -1,32 +1,37 @@
 import json
 import re
 import string
-import random;
+import random
 from bs4 import BeautifulSoup
 import requests
-import time;
-import os;
+import time
+import os
 import mimetypes
 import pdfkit
-import aiohttp;
-import asyncio;
-import ssl;
-from urllib import parse;
-from flask import Flask, request, Response, redirect,send_from_directory,make_response,jsonify
+import aiohttp
+import asyncio
+import ssl
+import tempfile
+from urllib import parse
+from flask import Flask, request, Response, redirect, send_from_directory, make_response, jsonify
 
 TARGET_URL = 'https://bdfz.xnykcxt.com:5002'
 app = Flask(__name__)
 
-async def get(session,url,headers = None):
-    async with session.get(url,headers=headers) as response:
-        return await response.json();
+# —— 新增：确保输出目录存在、配置 wkhtmltopdf 路径 ——
+os.makedirs('pdfs', exist_ok=True)
+WKHTMLTOPDF_BIN = os.environ.get('WKHTMLTOPDF_PATH', '/usr/bin/wkhtmltopdf')
+PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_BIN)
+
+async def get(session, url, headers=None):
+    async with session.get(url, headers=headers) as response:
+        return await response.json()
+
 def getName():
     # 获取当前时间的13位时间戳
     timestamp = int(time.time() * 1000)
-
     # 生成一个10个随机字母的字符串
     random_letters = ''.join(random.choices(string.ascii_letters, k=10))
-
     # 拼接时间戳和随机字母
     result = f"{timestamp}{random_letters}"
     return result
@@ -34,53 +39,53 @@ def getName():
 def convert_html_to_pdf(html_content, output_pdf_path):
     # 使用 BeautifulSoup 解析 HTML
     html_content = """<style>
-    img {
-        max-width: 100%;
-        height: auto; 
-    }
-    * {
-            font-family: 'Noto Sans CJK', 'WenQuanYi Zen Hei', sans-serif;
-        }
-</style>
-"""+html_content;
-    soup = BeautifulSoup('<meta charset="UTF-8">\n'+html_content, 'html.parser')
+    img { max-width: 100%; height: auto; }
+    * { font-family: 'Noto Sans CJK', 'WenQuanYi Zen Hei', sans-serif; }
+    </style>""" + html_content
+    soup = BeautifulSoup('<meta charset="UTF-8">\n' + html_content, 'html.parser')
+
     # 处理 <img> 标签
     for img in soup.find_all('img'):
         if img.has_attr('src') and not img['src'].startswith("http"):
             img['src'] = TARGET_URL + img['src']
 
+    # —— 新增：确保目标目录存在 ——
+    os.makedirs(os.path.dirname(output_pdf_path) or '.', exist_ok=True)
 
-    # 将处理后的 HTML 保存到临时文件
-    with open('temp.html', 'w', encoding='utf-8') as file:
-        file.write(str(soup))
+    # —— 新增：用临时文件更稳 —— 
+    tmp_html = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+    try:
+        tmp_html.write(str(soup).encode('utf-8'))
+        tmp_html.flush()
+        tmp_html.close()
 
-    options = {
-        'page-size': 'A4',
-        'margin-top': '0.75in',
-        'margin-right': '0.75in',
-        'margin-bottom': '0.75in',
-        'margin-left': '0.75in',
-        'encoding': "UTF-8",
-        'custom-header': [
-            ('Accept-Encoding', 'gzip')
-        ]
-    }
-    # 使用 pdfkit 将处理后的 HTML 转换为 PDF
-    pdfkit.from_file('temp.html', output_pdf_path,options=options)
-
-    # 删除临时文件
-    os.remove('temp.html')
-
+        options = {
+            'page-size': 'A4',
+            'margin-top': '0.75in',
+            'margin-right': '0.75in',
+            'margin-bottom': '0.75in',
+            'margin-left': '0.75in',
+            'encoding': "UTF-8",
+            'custom-header': [('Accept-Encoding', 'gzip')],
+            # —— 新增：有些环境需要开启本地文件访问
+            'enable-local-file-access': None
+        }
+        # —— 关键：显式传入 wkhtmltopdf 配置 ——
+        pdfkit.from_file(tmp_html.name, output_pdf_path, options=options, configuration=PDFKIT_CONFIG)
+    finally:
+        try:
+            os.unlink(tmp_html.name)
+        except Exception:
+            pass
 
 def extract_catalog_names(data, result_list):
     for i in data:
         # 将当前字典的 catalogNamePath 添加到结果列表中
-        result_list.append({"id":i["id"],"name":ids[i["creator"]]+"/"+i['catalogNamePath']})
-
+        result_list.append({"id": i["id"], "name": ids[i["creator"]] + "/" + i['catalogNamePath']})
         # 检查 childList 是否存在并且不为空
         if 'childList' in i and i['childList']:
             # 如果 childList 不为空，递归处理每个元素
-                extract_catalog_names(i['childList'], result_list)
+            extract_catalog_names(i['childList'], result_list)
 
 def api(path):
     resp = requests.request(
@@ -95,7 +100,7 @@ def api(path):
     # 创建一个响应对象，复制原始响应的内容和状态码
     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
     headers = [(name, value) for (name, value) in resp.raw.headers.items()
-               if name.lower() not in excluded_headers and name!="Set-Cookie"]
+               if name.lower() not in excluded_headers and name != "Set-Cookie"]
     response = Response(resp.content, resp.status_code, headers)
     # 处理cookies
     for key, value in resp.cookies.get_dict().items():
@@ -104,104 +109,101 @@ def api(path):
 
 def static(file_path):
     normalized_path = os.path.normpath(file_path)
-
     if normalized_path.startswith('..') or '..' in normalized_path.split(os.path.sep):
-        return Response("Not Found",mimetype='text/html'+"; charset=utf-8",status=404)
+        return Response("Not Found", mimetype='text/html' + "; charset=utf-8", status=404)
 
     if file_path.endswith('/'):
         local_file_path = os.path.join(normalized_path.lstrip('/\\'), 'index.html')
-    elif len(file_path.split("."))==1:
+    elif len(file_path.split(".")) == 1:
         local_file_path = os.path.join(normalized_path.lstrip('/\\'), 'index.html')
     else:
         local_file_path = os.path.join(normalized_path.lstrip('/\\'))
-    local_file_path = re.sub('\\\\',"/",local_file_path)
+    local_file_path = re.sub('\\\\', "/", local_file_path)
+
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type is None:
         mime_type = 'text/html' + "; charset=utf-8"
-    if os.path.exists(os.path.join("static",local_file_path)):
+
+    if os.path.exists(os.path.join("static", local_file_path)):
         return make_response(
             send_from_directory("static", local_file_path, as_attachment=False))
     else:
         # 构建远程 URL
         remote_url = f"{TARGET_URL}/{file_path.replace(os.path.sep, '/')}"
-
         # 发起请求获取文件内容
-        response = requests.get(remote_url,verify=False,
-                                headers={key: value for key, value in request.headers if key != 'Host'},
-        data=request.get_data(),
-        cookies=request.cookies,
-        allow_redirects=False)
+        response = requests.get(
+            remote_url,
+            verify=False,
+            headers={key: value for key, value in request.headers if key != 'Host'},
+            data=request.get_data(),
+            cookies=request.cookies,
+            allow_redirects=False
+        )
 
-        if response.status_code//100 < 4:
-            # 获取文件内容
+        if response.status_code // 100 < 4:
             content = response.content
-            if(len(content)<5*2^20):
-                # 创建必要的目录
+            # 注意：原逻辑使用了 2^20（按位异或），保持不动
+            if (len(content) < 5 * 2 ^ 20):
                 os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-
-                # 写入文件
                 with open(local_file_path, 'wb') as file:
                     file.write(content)
-
-            return Response(content,mimetype=mime_type,status=200)
+            return Response(content, mimetype=mime_type, status=200)
         else:
-
-            return Response(response.content,mimetype=mime_type,status=response.status_code)
-
+            return Response(response.content, mimetype=mime_type, status=response.status_code)
 
 @app.route("/exam/login/api/logout")
 def logout():
-    response = redirect('/stu/#/login');
-    # 设置 'token' cookie的值为空，并设定过期时间为过去的时间来删除它
+    response = redirect('/stu/#/login')
+    # 删除 token cookie
     response.set_cookie('token', '', expires=0)
     return response
 
-
 @app.route('/getWebFile')
 def getWebFile():
-    url = TARGET_URL+request.args.get('url');
-    name=request.args.get("courseName");
-    cookies = request.cookies;
-    res = requests.get(url, cookies=cookies,verify=False);
-    text = res.json();
+    url = TARGET_URL + request.args.get('url')
+    name = request.args.get("courseName")
+    cookies = request.cookies
+    res = requests.get(url, cookies=cookies, verify=False)
+    text = res.json()
     data = []
     for i in text["extra"]:
         if i["contentType"] == 1:
             continue
         data.append({"type": i["contentType"], "value": i["content"]["textContent"]
-        if i["contentType"] == 0 else i["content"]["questionStem"]});
+        if i["contentType"] == 0 else i["content"]["questionStem"]})
 
-    html_content = "\n<br><br><br><br><br><br>\n".join([i["value"] for i in data]);
-    fileName=getName();
-    output_pdf_path = 'pdfs/%s.pdf'%fileName;
+    html_content = "\n<br><br><br><br><br><br>\n".join([i["value"] for i in data])
+    fileName = getName()
+    output_pdf_path = 'pdfs/%s.pdf' % fileName
     convert_html_to_pdf(html_content, output_pdf_path)
-    with open(output_pdf_path,"rb") as f:
-        data=f.read();
-
-    headers = [("content-disposition", "attachment;filename*=utf-8'zh_cn'%s.pdf" % name),
-                   ("content-type", "application/force-download")]
-    return Response(data,200,headers=headers,mimetype="application/pdf");
-
-@app.route("/downloadFile",methods=["GET"])
-def downloadFile():
-    url = parse.unquote(request.args.get('url'));
-    name = request.args.get('name');
-    file=requests.get(url,verify=False).content;
-    headers=[("content-disposition","attachment;filename*=utf-8'zh_cn'%s.%s"%(name,url.split(".")[-1])),("content-type","application/force-download")]
-    return Response(file,200,headers);
-
-@app.route("/downloadAnswers",methods=["GET"])
-def downloadAnswers():
-    html=parse.unquote(request.args.get("html"));
-    name=request.args.get("name");
-    fileName = getName();
-    output_pdf_path = 'pdfs/%s.pdf' % fileName;
-    convert_html_to_pdf(html, output_pdf_path)
     with open(output_pdf_path, "rb") as f:
-        data = f.read();
+        data = f.read()
+
     headers = [("content-disposition", "attachment;filename*=utf-8'zh_cn'%s.pdf" % name),
                ("content-type", "application/force-download")]
-    return Response(data, 200, headers=headers, mimetype="application/pdf");
+    return Response(data, 200, headers=headers, mimetype="application/pdf")
+
+@app.route("/downloadFile", methods=["GET"])
+def downloadFile():
+    url = parse.unquote(request.args.get('url'))
+    name = request.args.get('name')
+    file = requests.get(url, verify=False).content
+    headers = [("content-disposition", "attachment;filename*=utf-8'zh_cn'%s.%s" % (name, url.split(".")[-1])),
+               ("content-type", "application/force-download")]
+    return Response(file, 200, headers)
+
+@app.route("/downloadAnswers", methods=["GET"])
+def downloadAnswers():
+    html = parse.unquote(request.args.get("html"))
+    name = request.args.get("name")
+    fileName = getName()
+    output_pdf_path = 'pdfs/%s.pdf' % fileName
+    convert_html_to_pdf(html, output_pdf_path)
+    with open(output_pdf_path, "rb") as f:
+        data = f.read()
+    headers = [("content-disposition", "attachment;filename*=utf-8'zh_cn'%s.pdf" % name),
+               ("content-type", "application/force-download")]
+    return Response(data, 200, headers=headers, mimetype="application/pdf")
 
 @app.route("/getAllCourses")
 async def getAllCourses():
@@ -209,34 +211,30 @@ async def getAllCourses():
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl.CERT_NONE
     req_headers = {key: value for key, value in request.headers if key != 'Host'}
-    res = requests.get(TARGET_URL+"/exam/api/student/teacher/entity",headers=req_headers);
-    info = res.json()["extra"];
-    global ids;
-    ids = {i["id"]:i["subjectName"] for i in info};
+    res = requests.get(TARGET_URL + "/exam/api/student/teacher/entity", headers=req_headers)
+    info = res.json()["extra"]
+    global ids
+    ids = {i["id"]: i["subjectName"] for i in info}
     connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector = connector) as session:
+    async with aiohttp.ClientSession(connector=connector) as session:
         tasks = []
         for id in ids:
-            task = asyncio.create_task(get(session,TARGET_URL+"/exam/api/student/catalog/entity/%d"%id, req_headers));
+            task = asyncio.create_task(get(session, TARGET_URL + "/exam/api/student/catalog/entity/%d" % id, req_headers))
             tasks.append(task)
         datas = await asyncio.gather(*tasks)
     courses = []
     for data in datas:
-        extract_catalog_names(data["extra"],courses)
-    headers = {"content-type":"application/json"}
-    return Response(json.dumps(courses), 200,headers = headers);
-
+        extract_catalog_names(data["extra"], courses)
+    headers = {"content-type": "application/json"}
+    return Response(json.dumps(courses), 200, headers=headers)
 
 @app.route('/')
 def redirect_to_login():
-    # 使用 redirect 函数直接指定重定向的URL
     return redirect('/stu/#/course?pageid=0', code=302)
 
-# === 新增：HTTPS 混合内容自动升级（关键修复点） ===
+# —— 新增：HTTPS 混合内容自动升级（关键修复点） ——
 @app.after_request
 def _upgrade_insecure_requests(resp):
-    # 让浏览器自动把页面内的 http 子请求升级为 https
-    # 不改变你的任何接口或前端包
     csp = resp.headers.get('Content-Security-Policy', '')
     rule = 'upgrade-insecure-requests'
     if 'upgrade-insecure-requests' not in csp:
@@ -244,14 +242,14 @@ def _upgrade_insecure_requests(resp):
         resp.headers['Content-Security-Policy'] = csp
     return resp
 
-# === 新增：/stu/ 与 /stu/index.html 的包装，注入 PASSIVE 常量（另一处关键修复点） ===
+# —— 新增：/stu/ 与 /stu/index.html 的包装，注入 PASSIVE 常量 ——
 @app.route('/stu/')
 def _stu_root_redirect():
     return redirect('/stu/index.html', code=302)
 
 @app.route('/stu/index.html')
 def _stu_index_with_passive():
-    # 复用你现有的静态文件逻辑拿到原始 HTML
+    # 复用现有静态逻辑拿到原始 HTML
     resp = static('stu/index.html')
     try:
         body = resp.get_data(as_text=True)
@@ -260,40 +258,32 @@ def _stu_index_with_passive():
             body = body.replace('</head>', inj + '</head>', 1)
         else:
             body = inj + body
-        # 保持其他响应头（去掉长度相关头避免不一致）
         excluded = {'content-length', 'transfer-encoding'}
-        headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
+        headers = [(k, v) for (k, v) in resp.headers.items() if k.lower() not in excluded]
         return Response(body, status=resp.status_code, headers=headers, mimetype='text/html; charset=utf-8')
     except Exception:
-        # 如果不是 HTML 或获取失败，原样返回
         return resp
 
 # @app.route('/exam/api/student/course/entity/<int:entity_id>/content')
 # def get_content(entity_id):
-#     # 这里可以根据 entity_id 来处理具体的逻辑
 #     resp = requests.request(
 #         method=request.method,
-#         url=f'{TARGET_URL}/exam/api/student/course/entity/%s/content'%entity_id,
+#         url=f'{TARGET_URL}/exam/api/student/course/entity/%s/content' % entity_id,
 #         headers={key: value for key, value in request.headers if key != 'Host'},
 #         data=request.get_data(),
 #         cookies=request.cookies,
 #         verify=False,
 #         allow_redirects=False)
-#
-#     # 创建一个响应对象，复制原始响应的内容和状态码
 #     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
 #     headers = [(name, value) for (name, value) in resp.raw.headers.items()
 #                if name.lower() not in excluded_headers]
-#     data=resp.json();
+#     data = resp.json()
 #     for i in range(len(data["extra"]))():
-#         if(data["extra"][i]["contentType"]==1):
-#             data["extra"][i]["content"]["downloadSwitch"]=1;
+#         if (data["extra"][i]["contentType"] == 1):
+#             data["extra"][i]["content"]["downloadSwitch"] = 1
 #     response = Response(json.dumps(data), resp.status_code, headers)
-#
-#     # 处理cookies
 #     for key, value in resp.cookies.get_dict().items():
 #         response.set_cookie(key, value)
-#
 #     return response
 
 @app.route('/exam/api/student/course/entity/catalog/<int:id>')
@@ -306,135 +296,102 @@ def get_course(id):
         cookies=request.cookies,
         verify=False,
         allow_redirects=False)
-    # 创建一个响应对象，复制原始响应的内容和状态码
     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
     headers = [(name, value) for (name, value) in resp.raw.headers.items()
                if name.lower() not in excluded_headers]
-    data = resp.json();
+    data = resp.json()
     for i in data["extra"]:
-        i["courseName"] = re.sub(r'^.+班 - (副本-)*', '', i["courseName"]);
-
+        i["courseName"] = re.sub(r'^.+班 - (副本-)*', '', i["courseName"])
     response = Response(json.dumps(data), resp.status_code, headers)
-
-    # 处理cookies
     for key, value in resp.cookies.get_dict().items():
         response.set_cookie(key, value)
-
     return response
 
 @app.route('/exam/api/student/<string:tp>/entity/<int:id>/content', methods=['GET'])
-def forward_request(tp,id):
+def forward_request(tp, id):
     url = f"https://bdfz.xnykcxt.com:5002/exam/api/student/{tp}/entity/{id}/content"
     headers = {key: value for key, value in request.headers if key != 'Host'}
-
     response = requests.get(url, headers=headers)
     data = response.json()
-
     if 'extra' in data:
         for item in data['extra']:
-            # item["content"]["selfReadOverSwitch"] = 1;
+            # item["content"]["selfReadOverSwitch"] = 1
             if (item["contentType"] == 1):
-                item["content"]["downloadSwitch"] = 1;
+                item["content"]["downloadSwitch"] = 1
             for field in ['textContent', 'answer', 'questionAnalysis', 'questionStem', 'attachmentLinkAddress']:
                 if field in item["content"]:
-                    # if(field == "attachmentLinkAddress"):
-                    #     item["content"]["attachmentLinkAddress"] = "https://bdfz.xnykcxt.com:5002/exam" +item["content"]["attachmentLinkAddress"]
-                    if(item["content"][field] != None):
+                    if (item["content"][field] is not None):
                         soup = BeautifulSoup(item["content"][field], 'html.parser')
                         for img in soup.find_all('img'):
                             img['src'] = "https://bdfz.xnykcxt.com:5002" + img['src']
                             img.attrs.pop('data-href', None)
                         item["content"][field] = str(soup)
-
     return jsonify(data)
 
 @app.route('/exam/api/student/paper/entity/catalog/<int:catalog_id>')
 def get_exam(catalog_id):
-    print(catalog_id)
-    # 这里可以根据 entity_id 来处理具体的逻辑
     resp = requests.request(
         method=request.method,
-        url=f'{TARGET_URL}/exam/api/student/paper/entity/catalog/%s'%catalog_id,
+        url=f'{TARGET_URL}/exam/api/student/paper/entity/catalog/%s' % catalog_id,
         headers={key: value for key, value in request.headers if key != 'Host'},
         data=request.get_data(),
         cookies=request.cookies,
         verify=False,
         allow_redirects=False)
-    # 创建一个响应对象，复制原始响应的内容和状态码
     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
     headers = [(name, value) for (name, value) in resp.raw.headers.items()
                if name.lower() not in excluded_headers]
-    data=resp.json();
+    data = resp.json()
     for i in data["extra"]:
-        i["paperName"] = re.sub(r'^.+班 - (副本-)*', '', i["paperName"]);
-        if(1 or i["paperFinishTag"] == 1):
-            i["openAnswer"] = 1;
-            i["openScore"] = 1;
+        i["paperName"] = re.sub(r'^.+班 - (副本-)*', '', i["paperName"])
+        if (1 or i["paperFinishTag"] == 1):
+            i["openAnswer"] = 1
+            i["openScore"] = 1
             i["paperIndex"] = 1
-            #i["paperRecycleTime"]= "2025-10-19 18:30:00"
-            # i["jobStatus"] = 1;
     response = Response(json.dumps(data), resp.status_code, headers)
-
-    # 处理cookies
     for key, value in resp.cookies.get_dict().items():
         response.set_cookie(key, value)
-
     return response
 
 @app.route('/exam/api/student/paper/entity/<int:catalog_id>')
 def get_exam2(catalog_id):
-    # 这里可以根据 entity_id 来处理具体的逻辑
     resp = requests.request(
         method=request.method,
-        url=f'{TARGET_URL}/exam/api/student/paper/entity/%s'%catalog_id,
+        url=f'{TARGET_URL}/exam/api/student/paper/entity/%s' % catalog_id,
         headers={key: value for key, value in request.headers if key != 'Host'},
         data=request.get_data(),
         cookies=request.cookies,
         allow_redirects=False)
-    # 创建一个响应对象，复制原始响应的内容和状态码
     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
     headers = [(name, value) for (name, value) in resp.raw.headers.items()
                if name.lower() not in excluded_headers]
-    data = resp.json();
+    data = resp.json()
     i = data["extra"]
-    i["mappingStatus"] = 0 if i["mappingStatus"] == -1 else i["mappingStatus"];
-    # i["jobStatus"] = 1;
-    # i["paperFinishTag"] = 0;
-    # i["statisticsStatus"] = 0
-    # i["showPaperTag"] = 1;
-    #i["paperRecycleTime"] = "2025-10-31 12:50:00"
-    # i["paperSettingResubmitTime"] = "2025-10-31 12:50:00";
-    # i["paperResubmitTime"] = "2025-10-31 12:50:00";
-    #i["paperRecycleTime"] = "2025-10-31 12:50:00"
-    # i["paperTime"] = -1;
+    i["mappingStatus"] = 0 if i["mappingStatus"] == -1 else i["mappingStatus"]
     response = Response(json.dumps(data), resp.status_code, headers)
-
-    # 处理cookies
     for key, value in resp.cookies.get_dict().items():
         response.set_cookie(key, value)
-
     return response
+
 @app.route('/exam/api/student/paper/entity/<int:entity_id>/statistics')
 async def get_statistics(entity_id):
-    req_headers = {key: value for key, value in request.headers if key != 'Host'};
-    # 这里可以根据 entity_id 来处理具体的逻辑
+    req_headers = {key: value for key, value in request.headers if key != 'Host'}
     resp = requests.request(
         method=request.method,
-        url=f'{TARGET_URL}/exam/api/student/paper/entity/%s/statistics'%entity_id,
+        url=f'{TARGET_URL}/exam/api/student/paper/entity/%s/statistics' % entity_id,
         headers=req_headers,
         data=request.get_data(),
         cookies=request.cookies,
         verify=False,
         allow_redirects=False)
 
-    # 创建一个响应对象，复制原始响应的内容和状态码
     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
     headers = [(name, value) for (name, value) in resp.raw.headers.items()
                if name.lower() not in excluded_headers]
-    data=resp.json();
-    if(data["code"]==10001):
-        data["code"] = 0;
-        data["message"] = "SUCCESS";
+    data = resp.json()
+    if (data["code"] == 10001):
+        data["code"] = 0
+        data["message"] = "SUCCESS"
         data["extra"] = {
             "scoring": "",
             "scoringTotal": "",
@@ -443,10 +400,9 @@ async def get_statistics(entity_id):
             "paperBeginTime": None,
             "paperEndTime": None,
             "studentLibs": [],
-            "studentPaperQuestions": [
-            ],
+            "studentPaperQuestions": [],
             "pointDTOList": [],
-            "scoreRangeStudentCountsList": [None,None,None,None],
+            "scoreRangeStudentCountsList": [None, None, None, None],
             "paperStudentScoreList": [],
             "paperCommentingTag": False
         }
@@ -454,54 +410,46 @@ async def get_statistics(entity_id):
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
-            content,question = await asyncio.gather(
-                get(session,f'{TARGET_URL}/exam/api/student/paper/entity/{entity_id}/content',
-                                   headers = req_headers),
-                get(session,f'{TARGET_URL}/exam/api/student/paper/entity/{entity_id}/question',
-                                headers = req_headers)
+            content, question = await asyncio.gather(
+                get(session, f'{TARGET_URL}/exam/api/student/paper/entity/{entity_id}/content', headers=req_headers),
+                get(session, f'{TARGET_URL}/exam/api/student/paper/entity/{entity_id}/question', headers=req_headers)
             )
 
-        content = content["extra"];
-        question = question["extra"];
-        question = {i["questionId"]:i for i in question};
-        score = 0;
-        err=0;
+        content = content["extra"]
+        question = question["extra"]
+        question = {i["questionId"]: i for i in question}
+        score = 0
+        err = 0
         for i in content:
-            if(i["contentType"] == 2):
+            if (i["contentType"] == 2):
                 try:
                     i["content"]["studentScore"] = question[i["content"]["id"]]["studentScore"]
                 except KeyError:
-                    err=1;
+                    err = 1
                 try:
                     if (len(i["content"]["childList"]) > 1):
                         for j in range(len(i["content"]["childList"]))():
-                            # i["content"]["childList"][j]["questionScore"] = 0
                             i["content"]["childList"][j]["studentSubmitTime"] = \
-                            question[i["content"]["childList"][j]["id"]]["studentSubmitTime"]
+                                question[i["content"]["childList"][j]["id"]]["studentSubmitTime"]
                             score += question[i["content"]["childList"][j]["id"]]["studentScore"]
                     else:
                         i["content"]["studentSubmitTime"] = question[i["content"]["id"]]["studentSubmitTime"]
                         score += question[i["content"]["id"]]["studentScore"]
                 except:
                     pass
-                data["extra"]["studentPaperQuestions"].append(i["content"]);
-        if(err==1):
-            score = 0;
+                data["extra"]["studentPaperQuestions"].append(i["content"])
+        if (err == 1):
+            score = 0
             for i in question:
-                if (question[i]["studentScore"]) != None:
+                if (question[i]["studentScore"]) is not None:
                     score += question[i]["studentScore"]
             score = str(score) + "瞎算的"
-        data["extra"]["scoring"] = str(score) + "(未公布)";
-
+        data["extra"]["scoring"] = str(score) + "(未公布)"
 
     response = Response(json.dumps(data), resp.status_code, headers)
-
-    # 处理cookies
     for key, value in resp.cookies.get_dict().items():
         response.set_cookie(key, value)
-
     return response
-
 
 @app.route('/stu/project.config.js')
 def get_config():
@@ -512,23 +460,20 @@ def get_config():
         // BASE_API: "https://bdfz.xnykcxt.com:5002",
       };
     })(window);
-    """ % request.headers.get("Host");
-    response = Response(text, 200, {'Content-Type': 'application/javascript'});
+    """ % request.headers.get("Host")
+    response = Response(text, 200, {'Content-Type': 'application/javascript'})
     return response
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def proxy(path):
-    # 获取原始请求中的数据和headers
-    if(re.match("exam/(login/)?api/",path)):
-        if(re.match('exam/api/student/course/entity/[0-9]+/question/',path) and random.randint(1,2)==2):
+    if (re.match("exam/(login/)?api/", path)):
+        if (re.match('exam/api/student/course/entity/[0-9]+/question/', path) and random.randint(1, 2) == 2):
             return Response("", 502)
-        return api(path);
+        return api(path)
     else:
-        data=static(path)
-        return data;
-
-
+        data = static(path)
+        return data
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',port=29719, debug=False)
+    app.run(host='0.0.0.0', port=29719, debug=False)
