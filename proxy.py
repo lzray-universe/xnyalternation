@@ -1,3 +1,4 @@
+
 import json
 import re
 import string
@@ -14,36 +15,34 @@ import ssl
 import tempfile
 import base64
 import zlib
-import hashlib
 from urllib import parse
 from urllib import parse as _parse
 from flask import Flask, request, Response, redirect, send_from_directory, make_response, jsonify
 
+# === Upstream target ===
 TARGET_URL = 'https://bdfz.xnykcxt.com:5002'
+
 app = Flask(__name__)
 
-# —— PDF 输出与 wkhtmltopdf —— #
+# === wkhtmltopdf & output dir ===
 os.makedirs('pdfs', exist_ok=True)
 WKHTMLTOPDF_BIN = os.environ.get('WKHTMLTOPDF_PATH', '/usr/bin/wkhtmltopdf')
 PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_BIN)
 
-# —— 超短 token 映射（内存；Render 单实例足够） —— #
+# === short link in-memory map for PDFs ===
 SHORT_MAP = {}
 def _short_put(url: str) -> str:
-    # 取 8 字节随机 token，冲突概率可忽略
     token = base64.urlsafe_b64encode(os.urandom(6)).decode().rstrip("=")
     SHORT_MAP[token] = url
     return token
-
-def _short_get(token: str) -> str | None:
+def _short_get(token: str):
     return SHORT_MAP.get(token)
 
-# —— 工具：b64url 压缩/解压 —— #
+# === helpers: base64url + zlib compression ===
 def b64url_encode(s: str) -> str:
     data = zlib.compress(s.encode('utf-8'))
     b = base64.urlsafe_b64encode(data).decode().rstrip("=")
     return b
-
 def b64url_decode(b: str) -> str:
     pad = '=' * (-len(b) % 4)
     raw = base64.urlsafe_b64decode(b + pad)
@@ -118,13 +117,13 @@ def api(path):
         response.set_cookie(key, value)
     return response
 
-# —— 修正版静态服务 —— #
+# === fixed static serving ===
 def static(file_path):
     normalized_path = os.path.normpath(file_path)
     if normalized_path.startswith('..') or '..' in normalized_path.split(os.path.sep):
         return Response("Not Found", mimetype='text/html; charset=utf-8', status=404)
 
-    # 解析本地相对路径
+    # resolve local relative path
     if file_path.endswith('/'):
         local_file_path = os.path.join(normalized_path.lstrip('/\\'), 'index.html')
     elif len(file_path.split(".")) == 1:
@@ -133,7 +132,7 @@ def static(file_path):
         local_file_path = os.path.join(normalized_path.lstrip('/\\'))
     local_file_path = re.sub('\\\\', "/", local_file_path)
 
-    # 如果以 static/ 开头，去掉这个前缀后再和本地 static 目录拼
+    # if startswith static/, drop it for on-disk path under ./static
     disk_rel = local_file_path
     if disk_rel.startswith('static/'):
         disk_rel = disk_rel[len('static/'):]
@@ -142,7 +141,7 @@ def static(file_path):
     if os.path.exists(local_on_disk):
         return make_response(send_from_directory("static", disk_rel, as_attachment=False))
 
-    # 否则：从上游拉取并缓存到 ./static/<disk_rel>
+    # pull from upstream and cache into ./static/<disk_rel>
     remote_url = f"{TARGET_URL}/{file_path.replace(os.path.sep, '/')}"
     response = requests.get(
         remote_url,
@@ -166,7 +165,40 @@ def static(file_path):
     else:
         return Response(response.content, mimetype=mime_type, status=response.status_code)
 
-# 显式处理 /static/* ，确保优先命中本地补丁版 viewer.html
+# === FORCE rewrite for viewer.html?file=... to /pdfproxy ===
+# Put BEFORE the generic /static/<path> route to ensure precedence
+@app.route('/static/exam/pdf/web/viewer.html')
+def _viewer_html_rewrite():
+    # already proxied? just serve viewer
+    if request.args.get('__proxied') == '1':
+        return static('static/exam/pdf/web/viewer.html')
+
+    file_param = request.args.get('file', '')
+    if not file_param:
+        return static('static/exam/pdf/web/viewer.html')
+
+    # tolerate encoded / unencoded
+    try:
+        file_decoded = _parse.unquote(file_param)
+    except Exception:
+        file_decoded = file_param
+
+    # if already pointing to /pdfproxy, just serve viewer
+    if file_decoded.startswith('/pdfproxy'):
+        return static('static/exam/pdf/web/viewer.html')
+
+    # wrap to /pdfproxy?url=...
+    proxied = '/pdfproxy?url=' + _parse.quote(file_decoded, safe='')
+
+    # rebuild query and 302 redirect once
+    q = request.args.to_dict(flat=True)
+    q['file'] = proxied
+    q['__proxied'] = '1'
+    new_query = _parse.urlencode(q, doseq=True)
+    new_url = request.path + ('?' + new_query if new_query else '')
+    return redirect(new_url, code=302)
+
+# explicit static route to ensure local patched files are used
 @app.route('/static/<path:filename>')
 def _serve_static(filename):
     return static('static/' + filename)
@@ -177,14 +209,13 @@ def logout():
     response.set_cookie('token', '', expires=0)
     return response
 
-# ===================== PDF 代理（含短链） ===================== #
+# ============== PDF proxy (with short link) ==============
 @app.route('/pdfproxy/register')
 def pdfproxy_register():
     raw = request.args.get('url', '')
     if not raw:
         return jsonify({"error": "missing url"}), 400
     url = _parse.unquote(raw)
-    # 相对路径统一补上 TARGET_URL
     if url.startswith('/'):
         url = f"{TARGET_URL}{url}"
     token = _short_put(url)
@@ -211,7 +242,6 @@ def pdfproxy_query():
     if not raw:
         return Response("missing url", 400)
     url = _parse.unquote(raw)
-    # 允许直接传相对路径
     if url.startswith('/'):
         url = f"{TARGET_URL}{url}"
     return _pdfproxy_core(url)
@@ -226,9 +256,8 @@ def _pdfproxy_core(upstream: str):
         allow_redirects=True
     )
     ct = r.headers.get('Content-Type') or 'application/pdf'
-    # 不强制下载，便于 PDF.js 渲染
     return Response(r.content, status=r.status_code, headers=[('Content-Type', ct)])
-# ============================================================= #
+# =========================================================
 
 @app.route('/getWebFile')
 def getWebFile():
@@ -308,7 +337,7 @@ async def getAllCourses():
 def redirect_to_login():
     return redirect('/stu/#/course?pageid=0', code=302)
 
-# —— 混合内容自动升级 —— #
+# === CSP upgrade insecure requests ===
 @app.after_request
 def _upgrade_insecure_requests(resp):
     csp = resp.headers.get('Content-Security-Policy', '')
@@ -318,7 +347,7 @@ def _upgrade_insecure_requests(resp):
         resp.headers['Content-Security-Policy'] = csp
     return resp
 
-# —— /stu/ 包装：注入 PASSIVE —— #
+# === wrap /stu/ to inject PASSIVE ===
 @app.route('/stu/')
 def _stu_root_redirect():
     return redirect('/stu/index.html', code=302)
@@ -514,6 +543,7 @@ def get_config():
     response = Response(text, 200, {'Content-Type': 'application/javascript'})
     return response
 
+# --- catch-all ---
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def proxy(path):
