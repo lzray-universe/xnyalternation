@@ -13,12 +13,13 @@ import asyncio
 import ssl
 import tempfile
 from urllib import parse
+from urllib import parse as _parse
 from flask import Flask, request, Response, redirect, send_from_directory, make_response, jsonify
 
 TARGET_URL = 'https://bdfz.xnykcxt.com:5002'
 app = Flask(__name__)
 
-# —— 新增：确保输出目录存在、配置 wkhtmltopdf 路径 ——
+# —— 确保输出目录存在、配置 wkhtmltopdf 路径 ——
 os.makedirs('pdfs', exist_ok=True)
 WKHTMLTOPDF_BIN = os.environ.get('WKHTMLTOPDF_PATH', '/usr/bin/wkhtmltopdf')
 PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_BIN)
@@ -28,31 +29,23 @@ async def get(session, url, headers=None):
         return await response.json()
 
 def getName():
-    # 获取当前时间的13位时间戳
     timestamp = int(time.time() * 1000)
-    # 生成一个10个随机字母的字符串
     random_letters = ''.join(random.choices(string.ascii_letters, k=10))
-    # 拼接时间戳和随机字母
-    result = f"{timestamp}{random_letters}"
-    return result
+    return f"{timestamp}{random_letters}"
 
 def convert_html_to_pdf(html_content, output_pdf_path):
-    # 使用 BeautifulSoup 解析 HTML
     html_content = """<style>
     img { max-width: 100%; height: auto; }
     * { font-family: 'Noto Sans CJK', 'WenQuanYi Zen Hei', sans-serif; }
     </style>""" + html_content
     soup = BeautifulSoup('<meta charset="UTF-8">\n' + html_content, 'html.parser')
 
-    # 处理 <img> 标签
     for img in soup.find_all('img'):
         if img.has_attr('src') and not img['src'].startswith("http"):
             img['src'] = TARGET_URL + img['src']
 
-    # —— 新增：确保目标目录存在 ——
     os.makedirs(os.path.dirname(output_pdf_path) or '.', exist_ok=True)
 
-    # —— 新增：用临时文件更稳 —— 
     tmp_html = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
     try:
         tmp_html.write(str(soup).encode('utf-8'))
@@ -67,10 +60,8 @@ def convert_html_to_pdf(html_content, output_pdf_path):
             'margin-left': '0.75in',
             'encoding': "UTF-8",
             'custom-header': [('Accept-Encoding', 'gzip')],
-            # —— 新增：有些环境需要开启本地文件访问
             'enable-local-file-access': None
         }
-        # —— 关键：显式传入 wkhtmltopdf 配置 ——
         pdfkit.from_file(tmp_html.name, output_pdf_path, options=options, configuration=PDFKIT_CONFIG)
     finally:
         try:
@@ -80,11 +71,8 @@ def convert_html_to_pdf(html_content, output_pdf_path):
 
 def extract_catalog_names(data, result_list):
     for i in data:
-        # 将当前字典的 catalogNamePath 添加到结果列表中
         result_list.append({"id": i["id"], "name": ids[i["creator"]] + "/" + i['catalogNamePath']})
-        # 检查 childList 是否存在并且不为空
         if 'childList' in i and i['childList']:
-            # 如果 childList 不为空，递归处理每个元素
             extract_catalog_names(i['childList'], result_list)
 
 def api(path):
@@ -97,12 +85,10 @@ def api(path):
         verify=False,
         allow_redirects=False)
 
-    # 创建一个响应对象，复制原始响应的内容和状态码
     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
     headers = [(name, value) for (name, value) in resp.raw.headers.items()
                if name.lower() not in excluded_headers and name != "Set-Cookie"]
     response = Response(resp.content, resp.status_code, headers)
-    # 处理cookies
     for key, value in resp.cookies.get_dict().items():
         response.set_cookie(key, value)
     return response
@@ -110,7 +96,7 @@ def api(path):
 def static(file_path):
     normalized_path = os.path.normpath(file_path)
     if normalized_path.startswith('..') or '..' in normalized_path.split(os.path.sep):
-        return Response("Not Found", mimetype='text/html' + "; charset=utf-8", status=404)
+        return Response("Not Found", mimetype='text/html; charset=utf-8', status=404)
 
     if file_path.endswith('/'):
         local_file_path = os.path.join(normalized_path.lstrip('/\\'), 'index.html')
@@ -122,15 +108,12 @@ def static(file_path):
 
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type is None:
-        mime_type = 'text/html' + "; charset=utf-8"
+        mime_type = 'text/html; charset=utf-8'
 
     if os.path.exists(os.path.join("static", local_file_path)):
-        return make_response(
-            send_from_directory("static", local_file_path, as_attachment=False))
+        return make_response(send_from_directory("static", local_file_path, as_attachment=False))
     else:
-        # 构建远程 URL
         remote_url = f"{TARGET_URL}/{file_path.replace(os.path.sep, '/')}"
-        # 发起请求获取文件内容
         response = requests.get(
             remote_url,
             verify=False,
@@ -142,8 +125,7 @@ def static(file_path):
 
         if response.status_code // 100 < 4:
             content = response.content
-            # 注意：原逻辑使用了 2^20（按位异或），保持不动
-            if (len(content) < 5 * 2 ^ 20):
+            if (len(content) < 5 * 2 ^ 20):  # 保持你原逻辑
                 os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
                 with open(local_file_path, 'wb') as file:
                     file.write(content)
@@ -154,9 +136,31 @@ def static(file_path):
 @app.route("/exam/login/api/logout")
 def logout():
     response = redirect('/stu/#/login')
-    # 删除 token cookie
     response.set_cookie('token', '', expires=0)
     return response
+
+# ============== 新增：PDF 代理，让 PDF.js 统一走你自己的域名 =================
+@app.route('/pdfproxy')
+def _pdfproxy():
+    raw = request.args.get('url', '')
+    if not raw:
+        return Response("missing url", 400)
+    url = _parse.unquote(raw)
+    if url.startswith('/'):
+        upstream = f"{TARGET_URL}{url}"
+    else:
+        upstream = url
+    r = requests.get(
+        upstream,
+        verify=False,
+        headers={k: v for k, v in request.headers if k.lower() != 'host'},
+        cookies=request.cookies,
+        stream=True,
+        allow_redirects=True
+    )
+    ct = r.headers.get('Content-Type', '') or 'application/pdf'
+    return Response(r.content, status=r.status_code, headers=[('Content-Type', ct)])
+# ============================================================================
 
 @app.route('/getWebFile')
 def getWebFile():
@@ -187,10 +191,15 @@ def getWebFile():
 def downloadFile():
     url = parse.unquote(request.args.get('url'))
     name = request.args.get('name')
-    file = requests.get(url, verify=False).content
-    headers = [("content-disposition", "attachment;filename*=utf-8'zh_cn'%s.%s" % (name, url.split(".")[-1])),
+    r = requests.get(url, verify=False)
+    content = r.content
+    # —— 若是 PDF，按 PDF 类型返回，便于 PDF.js 直接预览 ——
+    if url.lower().endswith('.pdf'):
+        return Response(content, 200, [('Content-Type', 'application/pdf')])
+    headers = [("content-disposition",
+                "attachment;filename*=utf-8'zh_cn'%s.%s" % (name, url.split(".")[-1])),
                ("content-type", "application/force-download")]
-    return Response(file, 200, headers)
+    return Response(content, 200, headers)
 
 @app.route("/downloadAnswers", methods=["GET"])
 def downloadAnswers():
@@ -232,7 +241,7 @@ async def getAllCourses():
 def redirect_to_login():
     return redirect('/stu/#/course?pageid=0', code=302)
 
-# —— 新增：HTTPS 混合内容自动升级（关键修复点） ——
+# —— 混合内容自动升级（HTTPS 下避免 http 子请求） ——
 @app.after_request
 def _upgrade_insecure_requests(resp):
     csp = resp.headers.get('Content-Security-Policy', '')
@@ -242,14 +251,13 @@ def _upgrade_insecure_requests(resp):
         resp.headers['Content-Security-Policy'] = csp
     return resp
 
-# —— 新增：/stu/ 与 /stu/index.html 的包装，注入 PASSIVE 常量 ——
+# —— /stu/ 与 /stu/index.html 的包装，注入 PASSIVE 常量 ——
 @app.route('/stu/')
 def _stu_root_redirect():
     return redirect('/stu/index.html', code=302)
 
 @app.route('/stu/index.html')
 def _stu_index_with_passive():
-    # 复用现有静态逻辑拿到原始 HTML
     resp = static('stu/index.html')
     try:
         body = resp.get_data(as_text=True)
@@ -263,28 +271,6 @@ def _stu_index_with_passive():
         return Response(body, status=resp.status_code, headers=headers, mimetype='text/html; charset=utf-8')
     except Exception:
         return resp
-
-# @app.route('/exam/api/student/course/entity/<int:entity_id>/content')
-# def get_content(entity_id):
-#     resp = requests.request(
-#         method=request.method,
-#         url=f'{TARGET_URL}/exam/api/student/course/entity/%s/content' % entity_id,
-#         headers={key: value for key, value in request.headers if key != 'Host'},
-#         data=request.get_data(),
-#         cookies=request.cookies,
-#         verify=False,
-#         allow_redirects=False)
-#     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-#     headers = [(name, value) for (name, value) in resp.raw.headers.items()
-#                if name.lower() not in excluded_headers]
-#     data = resp.json()
-#     for i in range(len(data["extra"]))():
-#         if (data["extra"][i]["contentType"] == 1):
-#             data["extra"][i]["content"]["downloadSwitch"] = 1
-#     response = Response(json.dumps(data), resp.status_code, headers)
-#     for key, value in resp.cookies.get_dict().items():
-#         response.set_cookie(key, value)
-#     return response
 
 @app.route('/exam/api/student/course/entity/catalog/<int:id>')
 def get_course(id):
@@ -315,7 +301,6 @@ def forward_request(tp, id):
     data = response.json()
     if 'extra' in data:
         for item in data['extra']:
-            # item["content"]["selfReadOverSwitch"] = 1
             if (item["contentType"] == 1):
                 item["content"]["downloadSwitch"] = 1
             for field in ['textContent', 'answer', 'questionAnalysis', 'questionStem', 'attachmentLinkAddress']:
@@ -456,8 +441,7 @@ def get_config():
     text = """(function (window) {
       window.$config = {
         BASE_API: "http://%s",
-        photoType: 2, //  0 只能拍照，1 只能选择相册，2 两者可以
-        // BASE_API: "https://bdfz.xnykcxt.com:5002",
+        photoType: 2,
       };
     })(window);
     """ % request.headers.get("Host")
