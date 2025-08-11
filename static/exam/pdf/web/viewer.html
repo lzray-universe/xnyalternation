@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <!--
 Copyright 2012 Mozilla Foundation
 
@@ -32,6 +32,20 @@ See https://github.com/adobe-type-tools/cmap-resources
 <!-- This snippet is used in production (included from viewer.html) -->
 <link rel="resource" type="application/l10n" href="locale/locale.properties">
 <script src="pdf.js"></script>
+<script>
+(function () {
+  var u = new URL(window.location.href);
+  var file = u.searchParams.get('file');
+  if (!file) return;
+  try { file = decodeURIComponent(file); } catch (e) {}
+  if (file.startsWith('/pdfproxy') || u.searchParams.has('__proxied')) return;
+  var proxied = '/pdfproxy?url=' + encodeURIComponent(file);
+  u.searchParams.set('file', encodeURIComponent(proxied));
+  u.searchParams.set('__proxied', '1');
+  window.location.replace(u.toString());
+})();
+</script>
+
 
   <script src="viewer.js"></script>
 
