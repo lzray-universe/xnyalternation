@@ -49,7 +49,35 @@ See https://github.com/adobe-type-tools/cmap-resources
 
   <script src="viewer.js"></script>
 
-  <script>(function(){try{var u=new URL(location.href),f=u.searchParams.get('file');if(!f)return;try{f=decodeURIComponent(f)}catch(e){};if(f.startsWith('/pdfproxy')||u.searchParams.get('__proxied')==='1')return;var prox='/pdfproxy?url='+encodeURIComponent(f);u.searchParams.set('file',encodeURIComponent(prox));u.searchParams.set('__proxied','1');location.replace(u.toString())}catch(e){console.warn('viewer rewrite failed',e)}})();</script>
+  <!-- injected (safe): normalize ?file to absolute '/pdfproxy?...' without over-encoding -->
+<script>
+(function(){
+  try{
+    var href = location.href;
+    var u = new URL(href);
+    var q = u.searchParams;
+    var h = u.hash ? new URLSearchParams(u.hash.slice(1)) : new URLSearchParams();
+    var f = q.get('file') || h.get('file');
+    if(!f) return;
+    // Already proxied: accept both /pdfproxy?url=... and /pdfproxy/t/...
+    if(/^\/pdfproxy(\/t\/|\?)/.test(f)) return;
+    // Build new 'file' value. Keep leading slash so PDF.js treats it as absolute, not relative.
+    var newFile;
+    if(/^https?:\/\//i.test(f) || f.startsWith('/')) {
+      newFile = '/pdfproxy?url=' + encodeURIComponent(f);
+    } else {
+      // relative path from upstream
+      newFile = '/pdfproxy?url=' + encodeURIComponent('/' + f);
+    }
+    // Compose full URL manually to avoid URLSearchParams auto-encoding '/' into %2F
+    var base = u.origin + u.pathname;
+    var marker = '__proxied=1';
+    var joined = base + '?file=' + encodeURI(newFile) + (u.search ? '&' : '&') + marker;
+    // Drop hash to avoid PDF.js hash-based routing interference
+    location.replace(joined);
+  }catch(e){ console.warn('viewer safe rewrite failed', e); }
+})();
+</script>
 </head>
 
   <body tabindex="1">
