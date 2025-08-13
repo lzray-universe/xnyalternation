@@ -1039,7 +1039,7 @@
                     "overflow-y": "auto"
                 },
                 attrs: {
-                    src: "/exam/pdf/web/viewer.html?file=/exam" + t.videoFile,
+                    src: "https://bdfz.xnykcxt.com:5002/exam/pdf/web/viewer.html?file=/exam" + t.videoFile,
                     width: "100%",
                     frameborder: "0"
                 }
