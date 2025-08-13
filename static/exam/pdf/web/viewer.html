@@ -49,7 +49,8 @@ See https://github.com/adobe-type-tools/cmap-resources
 
   <script src="viewer.js"></script>
 
-  </head>
+  <script>(function(){try{var u=new URL(location.href),f=u.searchParams.get('file');if(!f)return;try{f=decodeURIComponent(f)}catch(e){};if(f.startsWith('/pdfproxy')||u.searchParams.get('__proxied')==='1')return;var prox='/pdfproxy?url='+encodeURIComponent(f);u.searchParams.set('file',encodeURIComponent(prox));u.searchParams.set('__proxied','1');location.replace(u.toString())}catch(e){console.warn('viewer rewrite failed',e)}})();</script>
+</head>
 
   <body tabindex="1">
     <div id="outerContainer">
