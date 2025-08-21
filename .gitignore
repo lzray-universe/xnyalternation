@@ -1,0 +1,7 @@
+/photos/*
+/pdfs/*
+/static/exam/*
+**/.DS_Store
+/test.py
+/.idea
+/exam/jyhr/*

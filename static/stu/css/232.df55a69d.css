@@ -1,0 +1,141 @@
+.wrap[data-v-56a2485d] {
+    display: flex;
+    justify-content: space-between;
+    height: 100dvh;
+    background-color: #c3cce7
+}
+
+.wrap .nav[data-v-56a2485d] {
+    display: flex;
+    justify-content: space-between;
+    position: relative
+}
+
+.wrap .nav .put[data-v-56a2485d] {
+    width: 18px;
+    height: 40px;
+    line-height: 40px;
+    position: absolute;
+    right: -18px;
+    top: 45vh;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+    text-align: center;
+    color: #fff;
+    background-color: #6b79f0;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    user-select: none
+}
+
+.wrap .nav .treeBox[data-v-56a2485d] {
+    width: 200px;
+    margin: 10px 0;
+    border-radius: 8px;
+    background-color: #e0e5f3
+}
+
+.wrap .nav .treeBox .roll-box[data-v-56a2485d] {
+    overflow-y: auto;
+    height: calc(100% - 40px)
+}
+
+.wrap .nav .treeBox .title[data-v-56a2485d] {
+    width: 100%;
+    line-height: 36px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    color: #243675;
+    background-color: #fff;
+    font-size: 14px;
+    text-align: center
+}
+
+.wrap .nav .treeBox .folder[data-v-56a2485d] {
+    padding: 0 5px
+}
+
+.wrap .nav .treeBox .folder .folderName[data-v-56a2485d]  {
+    width: 100%;
+    padding-left: 8px;
+    line-height: 36px;
+    border-radius: 4px;
+    color: #243675;
+    background-color: #fff;
+    font-size: 14px
+}
+
+.near {
+    padding: 0 5px;
+
+}
+
+.near .folderNear{
+    width: 100%;
+    padding-left: 8px;
+    line-height: 36px;
+    border-radius: 4px;
+    color: #243675;
+    background-color: #fff;
+    font-size: 14px;
+    margin-bottom: 5px;
+    overflow:hidden;
+    white-space:nowrap;
+}
+.folderNear:hover{
+    background-color: #6c7af0
+}
+.nearCourse{
+    margin: 0;
+    padding: 4px 0;
+    white-space: nowrap;
+    list-style: none;
+    outline: 0;
+    overflow:hidden;
+    white-space:nowrap;
+}
+.nearCourse:hover {
+    background-color: #f1f1f1;
+}
+.wrap .nav .treeBox .folder .folderName[data-v-56a2485d]:first-child {
+    margin-top: 8px
+}
+
+.wrap .nav .treeBox .folder .folderName[data-v-56a2485d]:hover {
+    color: #fff!important;
+    background-color: #6c7af0!important
+}
+
+.wrap .router-view[data-v-56a2485d] {
+    width: calc(100vw - 280px);
+    margin: 10px 10px 0 0;
+    height: calc(100dvh - 20px);
+    border-radius: 8px;
+}
+.container{
+    height: 88vh
+}
+.active[data-v-56a2485d] {
+    color: #fff!important;
+    background-color: #6c7af0!important
+}
+
+.flex[data-v-56a2485d] {
+    flex: 1
+}
+
+.flexWidth[data-v-56a2485d] {
+    width: calc(100vw - 20px)!important
+}
+
+[data-v-56a2485d] .ant-badge-dot {
+    width: 8px;
+    height: 8px
+}
+
+.loading[data-v-56a2485d] {
+    text-align: center;
+    width: 100%;
+    color: #666;
+    margin-top: 20px
+}

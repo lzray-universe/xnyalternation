@@ -1,0 +1,27 @@
+.slider[data-v-d9e9ae46] {
+    width: 50px;
+    height: 100dvh;
+    min-height: 500px;
+    background-color: #343eab;
+    text-align: center;
+    color: #f6f5fa;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 48px
+}
+
+.slider .menu[data-v-d9e9ae46] {
+    padding-top: 40px
+}
+
+.slider .menu div[data-v-d9e9ae46] {
+    width: 50px;
+    margin-bottom: 20%;
+    text-align: center;
+    cursor: pointer
+}
+
+.active[data-v-d9e9ae46] {
+    color: #fff!important;
+    background-color: #6c7af0!important
+}

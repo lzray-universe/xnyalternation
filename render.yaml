@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: xnyAlteration
+    env: docker
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 7860
