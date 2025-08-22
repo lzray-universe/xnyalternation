@@ -232,33 +232,32 @@ def redirect_to_login():
     # 使用 redirect 函数直接指定重定向的URL
     return redirect('/stu/#/course?pageid=0', code=302)
 
-# @app.route('/exam/api/student/course/entity/<int:entity_id>/content')
-# def get_content(entity_id):
-#     # 这里可以根据 entity_id 来处理具体的逻辑
-#     resp = requests.request(
-#         method=request.method,
-#         url=f'{TARGET_URL}/exam/api/student/course/entity/%s/content'%entity_id,
-#         headers={key: value for key, value in request.headers if key != 'Host'},
-#         data=request.get_data(),
-#         cookies=request.cookies,
-#         verify=False,
-#         allow_redirects=False)
-#
-#     # 创建一个响应对象，复制原始响应的内容和状态码
-#     excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-#     headers = [(name, value) for (name, value) in resp.raw.headers.items()
-#                if name.lower() not in excluded_headers]
-#     data=resp.json();
-#     for i in range(len(data["extra"])):
-#         if(data["extra"][i]["contentType"]==1):
-#             data["extra"][i]["content"]["downloadSwitch"]=1;
-#     response = Response(json.dumps(data), resp.status_code, headers)
-#
-#     # 处理cookies
-#     for key, value in resp.cookies.get_dict().items():
-#         response.set_cookie(key, value)
-#
-#     return response
+@app.route('/exam/api/student/course/entity/<int:entity_id>/content')
+def get_content(entity_id):
+    # 这里可以根据 entity_id 来处理具体的逻辑
+    resp = requests.request(
+        method=request.method,
+        url=f'{TARGET_URL}/exam/api/student/course/entity/%s/content'%entity_id,
+        headers={key: value for key, value in request.headers if key != 'Host'},
+        data=request.get_data(),
+        cookies=request.cookies,
+        verify=False,
+        allow_redirects=False)
+    # 创建一个响应对象，复制原始响应的内容和状态码
+    excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+    headers = [(name, value) for (name, value) in resp.raw.headers.items()
+               if name.lower() not in excluded_headers]
+    data=resp.json();
+    for i in range(len(data["extra"])):
+        if(data["extra"][i]["contentType"]==1):
+            data["extra"][i]["content"]["downloadSwitch"]=1;
+    response = Response(json.dumps(data), resp.status_code, headers)
+
+    # 处理cookies
+    for key, value in resp.cookies.get_dict().items():
+        response.set_cookie(key, value)
+
+    return response
 
 @app.route('/exam/api/student/course/entity/catalog/<int:id>')
 def get_course(id):
