@@ -295,13 +295,13 @@ def forward_request(tp,id):
 
     if 'extra' in data:
         for item in data['extra']:
-            # item["content"]["selfReadOverSwitch"] = 1;
+            item["content"]["selfReadOverSwitch"] = 1;
             if (item["contentType"] == 1):
                 item["content"]["downloadSwitch"] = 1;
             for field in ['textContent', 'answer', 'questionAnalysis', 'questionStem', 'attachmentLinkAddress']:
                 if field in item["content"]:
-                    # if(field == "attachmentLinkAddress"):
-                    #     item["content"]["attachmentLinkAddress"] = "https://bdfz.xnykcxt.com:5002/exam" +item["content"]["attachmentLinkAddress"]
+                    if(field == "attachmentLinkAddress"):
+                        item["content"]["attachmentLinkAddress"] = "https://bdfz.xnykcxt.com:5002/exam" +item["content"]["attachmentLinkAddress"]
                     if(item["content"][field] != None):
                         soup = BeautifulSoup(item["content"][field], 'html.parser')
                         for img in soup.find_all('img'):
