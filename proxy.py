@@ -293,26 +293,25 @@ def get_course(id):
         response.set_cookie(key, value)
     return response
 
-# @app.route('/exam/api/student/<string:tp>/entity/<int:id>/content', methods=['GET'])
-# def forward_request(tp, id):
-#     url = f"{TARGET_URL}/exam/api/student/{tp}/entity/{id}/content"
-#     headers = {key: value for key, value in request.headers if key != 'Host'}
-#     response = requests.get(url, headers=headers)
-#     data = response.json()
-#     if 'extra' in data:
-#         for item in data['extra']:
-#             if (item["contentType"] == 1):
-#                 item["content"]["downloadSwitch"] = 1
-#             for field in ['textContent', 'answer', 'questionAnalysis', 'questionStem', 'attachmentLinkAddress']:
-#                 if field in item["content"]:
-#                     if (item["content"][field] is not None):
-#                         soup = BeautifulSoup(item["content"][field], 'html.parser')
-#                         for img in soup.find_all('img'):
-
-#                             img['src'] = TARGET_URL + img['src']
-#                             img.attrs.pop('data-href', None)
-#                         item["content"][field] = str(soup)
-#     return jsonify(data)
+@app.route('/exam/api/student/<string:tp>/entity/<int:id>/content', methods=['GET'])
+def forward_request(tp, id):
+    url = f"{TARGET_URL}/exam/api/student/{tp}/entity/{id}/content"
+    headers = {key: value for key, value in request.headers if key != 'Host'}
+    response = requests.get(url, headers=headers)
+    data = response.json()
+    if 'extra' in data:
+        for item in data['extra']:
+            if (item["contentType"] == 1):
+                item["content"]["downloadSwitch"] = 1
+            for field in ['textContent', 'answer', 'questionAnalysis', 'questionStem', 'attachmentLinkAddress']:
+                if field in item["content"]:
+                    if (item["content"][field] is not None):
+                        soup = BeautifulSoup(item["content"][field], 'html.parser')
+                        for img in soup.find_all('img'):
+                            img['src'] = TARGET_URL + img['src']
+                            img.attrs.pop('data-href', None)
+                        item["content"][field] = str(soup)
+    return jsonify(data)
 
 @app.route('/exam/api/student/paper/entity/catalog/<int:catalog_id>')
 def get_exam(catalog_id):
