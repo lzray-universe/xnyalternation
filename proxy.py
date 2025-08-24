@@ -380,7 +380,7 @@ async def get_statistics(entity_id):
         data["extra"] = {
             "scoring": "",
             "scoringTotal": "",
-            "scoringScoreMax": "114.514",
+            "scoringScoreMax": "114.516",
             "scoringScoreAvg": "1919.810",
             "paperBeginTime": None,
             "paperEndTime": None,
