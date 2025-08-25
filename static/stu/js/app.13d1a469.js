@@ -643,23 +643,14 @@
                     t.forEach(((e,t)=>{
                         1 === e.content.titleLevel && n.push(t)
                     }
-                    ));
-                    let r = t.findIndex((e=>1 === e.content.titleLevel));
-                    function s(e, t) {
-                        let n = -1;
-                        for (let r = e.length - 1; r >= 0; r--)
-                            if (t(e[r])) {
-                                n = r;
-                                break
-                            }
-                        return n
-                    }
-                    let o = s(t, (e=>1 === e.content.titleLevel));
-                    console.log(n),
-                    e.titleIds = [],
-                    n.length > 1 ? (n.reduce(((n,r)=>(e.titleIds = [...e.titleIds, ...t.slice(n + 1, r).map((e=>e.content.id))],
-                    r))),
-                    -1 !== o && (e.titleIds = [...e.titleIds, ...t.slice(o + 1).map((e=>e.content.id))])) : -1 !== r && (e.titleIds = t.slice(r + 1).map((e=>e.content.id))),
+                    )),
+                    e.titleIds = [];
+                    if (n.length > 1)
+                        for (let r = 1; r < n.length; r++) {
+                            let s = n[r] + 1,
+                                o = r < n.length - 1 ? n[r + 1] : t.length;
+                            e.titleIds = [...e.titleIds, ...t.slice(s, o).map((e=>e.content.id))]
+                        }
                     console.log(e.titleIds)
                 },
                 addTitleIds(e, t) {
